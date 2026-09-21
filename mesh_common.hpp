@@ -123,6 +123,59 @@ inline void addPrism(std::vector<Vertex>& verts, std::vector<uint32_t>& inds,
     }
 }
 
+// ---------- テーパー付き四角柱 (後脚 Femur の筋肉テーパー用) ----------
+// 断面は正方形のまま root 側 rStart から先端 rEnd へ線形に絞る。
+// addPrism と同じ面構成 (side 毎ストリップ) で、法線はテーパー傾斜を補正する。
+inline void addTaperedPrism(std::vector<Vertex>& verts, std::vector<uint32_t>& inds,
+                     glm::vec3 start, glm::vec3 end, float rStart, float rEnd, int segments,
+                     float partID, float legID, float legPartID,
+                     glm::vec3 pivotRoot, glm::vec3 pivotKnee) {
+    if (segments < 1) segments = 1;
+    glm::vec3 dir = end - start;
+    float len = glm::length(dir);
+    if (len < 0.001f) return;
+    glm::vec3 dirN = dir / len;
+
+    glm::vec3 up(0, 1, 0);
+    if (std::abs(glm::dot(dirN, up)) > 0.99f) up = glm::vec3(1, 0, 0);
+    glm::vec3 right = glm::normalize(glm::cross(dirN, up));
+    glm::vec3 fwd = glm::normalize(glm::cross(right, dirN));
+    glm::vec3 side[4] = {right, fwd, -right, -fwd};
+
+    float slope = (rStart - rEnd) / len;
+    // 全 side のストリップを先に生成 (addPrism と同じ面構成にするため)
+    uint32_t strip[4];
+    for (int s = 0; s < 4; s++) {
+        glm::vec3 n = glm::normalize(side[s] + dirN * slope);
+        strip[s] = (uint32_t)verts.size();
+        for (int i = 0; i <= segments; i++) {
+            float t = (float)i / (float)segments;
+            glm::vec3 c = start + dir * t;
+            float r = rStart + (rEnd - rStart) * t;
+            Vertex v;
+            v.position = c + side[s] * r;
+            v.normal = n;
+            v.partID = partID;
+            v.legID = legID;
+            v.legPartID = legPartID;
+            v.pivotRoot = pivotRoot;
+            v.pivotKnee = pivotKnee;
+            verts.push_back(v);
+        }
+    }
+    for (int s = 0; s < 4; s++) {
+        int sn = (s + 1) % 4;
+        for (int i = 0; i < segments; i++) {
+            uint32_t a = strip[s] + i;
+            uint32_t b = strip[s] + i + 1;
+            uint32_t c = strip[sn] + i;
+            uint32_t d = strip[sn] + i + 1;
+            inds.push_back(a); inds.push_back(c); inds.push_back(b);
+            inds.push_back(b); inds.push_back(c); inds.push_back(d);
+        }
+    }
+}
+
 // ---------- 三角形 ----------
 inline void addTriangle(std::vector<Vertex>& verts, std::vector<uint32_t>& inds,
                         glm::vec3 p1, glm::vec3 p2, glm::vec3 p3,
@@ -144,6 +197,51 @@ inline void addTriangle(std::vector<Vertex>& verts, std::vector<uint32_t>& inds,
 
     verts.push_back(v1); verts.push_back(v2); verts.push_back(v3);
     inds.push_back(base); inds.push_back(base+1); inds.push_back(base+2);
+}
+
+// ---------- 変形可能な箱 (bodyM などの変換行列を受け取る) ----------
+inline void addBoxM(std::vector<Vertex>& verts, std::vector<uint32_t>& inds,
+                    const glm::mat4& M,
+                    glm::vec3 center, glm::vec3 size,
+                    float partID, float legID, float legPartID,
+                    glm::vec3 pivotRoot, glm::vec3 pivotKnee) {
+    glm::vec3 h = size * 0.5f;
+    glm::vec3 localC[8] = {
+        center + glm::vec3(-h.x, -h.y, -h.z),
+        center + glm::vec3( h.x, -h.y, -h.z),
+        center + glm::vec3( h.x,  h.y, -h.z),
+        center + glm::vec3(-h.x,  h.y, -h.z),
+        center + glm::vec3(-h.x, -h.y,  h.z),
+        center + glm::vec3( h.x, -h.y,  h.z),
+        center + glm::vec3( h.x,  h.y,  h.z),
+        center + glm::vec3(-h.x,  h.y,  h.z),
+    };
+    glm::vec3 localN[6] = {{0,0,-1},{0,0,1},{-1,0,0},{1,0,0},{0,-1,0},{0,1,0}};
+    int f[6][4] = {{0,3,2,1},{4,5,6,7},{0,4,7,3},{1,2,6,5},{0,1,5,4},{3,7,6,2}};
+
+    glm::mat3 rotM = glm::mat3(M);
+
+    uint32_t base = (uint32_t)verts.size();
+    for (int fi = 0; fi < 6; fi++) {
+        glm::vec3 worldN = glm::normalize(rotM * localN[fi]);
+        for (int v = 0; v < 4; v++) {
+            Vertex vert;
+            vert.position  = glm::vec3(M * glm::vec4(localC[f[fi][v]], 1.0f));
+            vert.normal    = worldN;
+            vert.partID    = partID;
+            vert.legID     = legID;
+            vert.legPartID = legPartID;
+            vert.pivotRoot = glm::vec3(M * glm::vec4(pivotRoot, 1.0f));
+            vert.pivotKnee = glm::vec3(M * glm::vec4(pivotKnee, 1.0f));
+            verts.push_back(vert);
+        }
+        uint32_t i0 = base + fi*4 + 0;
+        uint32_t i1 = base + fi*4 + 1;
+        uint32_t i2 = base + fi*4 + 2;
+        uint32_t i3 = base + fi*4 + 3;
+        inds.push_back(i0); inds.push_back(i1); inds.push_back(i2);
+        inds.push_back(i0); inds.push_back(i2); inds.push_back(i3);
+    }
 }
 
 // ---------- カメラ ----------

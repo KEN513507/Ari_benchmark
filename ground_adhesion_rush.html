@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>キリギリス地面付着捕食シミュレーション</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #111318; font-family: sans-serif; color: #fff; }
+        #ui { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.85); padding: 15px 25px; border-radius: 12px; display: flex; gap: 15px; align-items: center; box-shadow: 0 4px 20px rgba(0,0,0,0.5); }
+        input[type=range] { width: 300px; }
+        button { background: #3b82f6; border: none; color: white; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight: bold; }
+        button:hover { background: #2563eb; }
+        #info { position: absolute; top: 15px; left: 15px; background: rgba(0,0,0,0.7); padding: 10px 15px; border-radius: 8px; font-size: 13px; line-height: 1.5; }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+</head>
+<body>
+
+<div id="info">
+    <b>キリギリス地面付着捕食（Ground-Adhesion Rush）</b><br>
+    ・赤マーカー: ターゲットアリ (体高 2mm)<br>
+    ・黄ライン: 地面接地座標 (Y = 0.00)<br>
+    ・頭部ピッチ: 地面垂直突き刺し構造
+</div>
+
+<div id="ui">
+    <button id="playBtn">再生 / 停止</button>
+    <span>モーションコマ:</span>
+    <input type="range" id="phaseSlider" min="0" max="1" step="0.001" value="0">
+    <span id="phaseLabel">コマ 1 (静止)</span>
+</div>
+
+<script>
+let scene, camera, renderer, controls;
+let grasshopperGroup, thoraxMesh, headGroup, leftMandible, rightMandible;
+let frontLegL, frontLegR, hindLegL, hindLegR;
+let isPlaying = false, animPhase = 0;
+
+function init() {
+    scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x1a1d24);
+
+    camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
+    camera.position.set(0, 3, 7);
+
+    renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.shadowMap.enabled = true;
+    document.body.appendChild(renderer.domElement);
+
+    controls = new THREE.OrbitControls(camera, renderer.domElement);
+    controls.target.set(0, 0.5, 0);
+
+    // ライティング
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+    scene.add(ambientLight);
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    dirLight.position.set(5, 10, 5);
+    dirLight.castShadow = true;
+    scene.add(dirLight);
+
+    // 地面グリッド & 地球表面
+    const grid = new THREE.GridHelper(20, 40, 0x3b82f6, 0x334155);
+    scene.add(grid);
+    const planeGeo = new THREE.PlaneGeometry(20, 20);
+    const planeMat = new THREE.MeshStandardMaterial({ color: 0x222630, roughness: 0.9 });
+    const plane = new THREE.Mesh(planeGeo, planeMat);
+    plane.rotation.x = -Math.PI / 2;
+    plane.receiveShadow = true;
+    scene.add(plane);
+
+    // ターゲットアリ (2mm 相当の極小赤球体)
+    const antGeo = new THREE.SphereGeometry(0.04, 8, 8);
+    const antMat = new THREE.MeshBasicMaterial({ color: 0xef4444 });
+    const ant = new THREE.Mesh(antGeo, antMat);
+    ant.position.set(0, 0.04, 1.2);
+    scene.add(ant);
+
+    buildGrasshopper();
+
+    document.getElementById('phaseSlider').addEventListener('input', (e) => {
+        animPhase = parseFloat(e.target.value);
+        updatePose(animPhase);
+    });
+
+    document.getElementById('playBtn').addEventListener('click', () => {
+        isPlaying = !isPlaying;
+    });
+
+    window.addEventListener('resize', onWindowResize);
+    updatePose(0);
+    animate();
+}
+
+function buildGrasshopper() {
+    grasshopperGroup = new THREE.Group();
+    scene.add(grasshopperGroup);
+
+    const matGreen = new THREE.MeshStandardMaterial({ color: 0x4ac158, roughness: 0.4 });
+    const matDark = new THREE.MeshStandardMaterial({ color: 0x2e7d32, roughness: 0.5 });
+    const matMandible = new THREE.MeshStandardMaterial({ color: 0x8d6e63, roughness: 0.3 });
+
+    // 1. 胸部 (Thorax)
+    const thoraxGeo = new THREE.CylinderGeometry(0.3, 0.25, 1.2, 12);
+    thoraxMesh = new THREE.Mesh(thoraxGeo, matGreen);
+    thoraxMesh.rotation.x = Math.PI / 2;
+    thoraxMesh.castShadow = true;
+    grasshopperGroup.add(thoraxMesh);
+
+    // 2. 頭部 (Head) - 前胸から関節接続
+    headGroup = new THREE.Group();
+    headGroup.position.set(0, 0, 0.6); // 胸部前面
+    thoraxMesh.add(headGroup);
+
+    const headGeo = new THREE.SphereGeometry(0.32, 12, 12);
+    headGeo.scale(1, 1.2, 1);
+    const headMesh = new THREE.Mesh(headGeo, matGreen);
+    headMesh.position.set(0, -0.1, 0.2);
+    headGroup.add(headMesh);
+
+    // 大顎 (Mandibles)
+    const mandGeo = new THREE.ConeGeometry(0.08, 0.3, 8);
+    leftMandible = new THREE.Mesh(mandGeo, matMandible);
+    leftMandible.position.set(-0.1, -0.4, 0.35);
+    leftMandible.rotation.z = -0.4;
+    headGroup.add(leftMandible);
+
+    rightMandible = new THREE.Mesh(mandGeo, matMandible);
+    rightMandible.position.set(0.1, -0.4, 0.35);
+    rightMandible.rotation.z = 0.4;
+    headGroup.add(rightMandible);
+
+    // 3. 腹部 (Abdomen)
+    const abdGeo = new THREE.ConeGeometry(0.35, 1.8, 12);
+    const abdMesh = new THREE.Mesh(abdGeo, matDark);
+    abdMesh.position.set(0, 0, -1.2);
+    abdMesh.rotation.x = -Math.PI / 2;
+    thoraxMesh.add(abdMesh);
+
+    // 4. 前脚 (Front Legs)
+    frontLegL = createLeg(matGreen, 0.6, 0.6);
+    frontLegL.position.set(-0.3, -0.2, 0.4);
+    thoraxMesh.add(frontLegL);
+
+    frontLegR = createLeg(matGreen, 0.6, 0.6);
+    frontLegR.position.set(0.3, -0.2, 0.4);
+    thoraxMesh.add(frontLegR);
+
+    // 5. 後脚 (Hind Legs - 巨大Femur)
+    hindLegL = createHindLeg(matGreen);
+    hindLegL.position.set(-0.35, 0, -0.3);
+    thoraxMesh.add(hindLegL);
+
+    hindLegR = createHindLeg(matGreen);
+    hindLegR.position.set(0.35, 0, -0.3);
+    thoraxMesh.add(hindLegR);
+}
+
+function createLeg(material, l1, l2) {
+    const leg = new THREE.Group();
+    const fGeo = new THREE.CylinderGeometry(0.05, 0.04, l1);
+    const femur = new THREE.Mesh(fGeo, material);
+    femur.position.y = -l1 / 2;
+    leg.add(femur);
+
+    const tibiaGroup = new THREE.Group();
+    tibiaGroup.position.y = -l1;
+    leg.add(tibiaGroup);
+
+    const tGeo = new THREE.CylinderGeometry(0.03, 0.02, l2);
+    const tibia = new THREE.Mesh(tGeo, material);
+    tibia.position.y = -l2 / 2;
+    tibiaGroup.add(tibia);
+
+    leg.tibiaGroup = tibiaGroup;
+    return leg;
+}
+
+function createHindLeg(material) {
+    const leg = new THREE.Group();
+    // 極太 Femur
+    const fGeo = new THREE.CylinderGeometry(0.18, 0.08, 1.6);
+    const femur = new THREE.Mesh(fGeo, material);
+    femur.position.y = 0.8;
+    leg.add(femur);
+
+    const tibiaGroup = new THREE.Group();
+    tibiaGroup.position.y = 1.6;
+    leg.add(tibiaGroup);
+
+    const tGeo = new THREE.CylinderGeometry(0.05, 0.03, 1.8);
+    const tibia = new THREE.Mesh(tGeo, material);
+    tibia.position.y = -0.9;
+    tibiaGroup.add(tibia);
+
+    leg.tibiaGroup = tibiaGroup;
+    return leg;
+}
+
+function updatePose(phase) {
+    let bodyY, bodyPitch, headPitch, mandOpen, hindFlex;
+    const label = document.getElementById('phaseLabel');
+
+    if (phase < 0.2) {
+        // コマ1: 静止
+        const t = phase / 0.2;
+        bodyY = 0.9; bodyPitch = 0; headPitch = 0; mandOpen = 0.2; hindFlex = 0;
+        label.innerText = "コマ 1: 静止姿勢 (Resting)";
+    } else if (phase < 0.4) {
+        // コマ2-3: 張力形成・最大張力
+        const t = (phase - 0.2) / 0.2;
+        bodyY = 0.9 + t * 0.4;
+        bodyPitch = -t * 0.3;
+        headPitch = -t * 0.2;
+        mandOpen = 0.2 + t * 0.6;
+        hindFlex = t * 0.5;
+        label.innerText = "コマ 2-3: 溜め・最大張力 (Tension)";
+    } else if (phase < 0.75) {
+        // コマ4: 地面付着突進 (GROUND-ADHESION RUSH) ★頭部が地面(Y=0)に直接接地★
+        const t = (phase - 0.4) / 0.35;
+        const plunge = Math.sin(t * Math.PI * 0.5);
+
+        bodyY = THREE.MathUtils.lerp(1.3, 0.32, plunge);      // 胴体を地表スレスレまで下降
+        bodyPitch = THREE.MathUtils.lerp(-0.3, 1.1, plunge);   // 63度前傾
+        headPitch = THREE.MathUtils.lerp(-0.2, 1.25, plunge);  // 首を激しく屈曲させて頭を地面へ突き刺す
+        mandOpen = (t > 0.8) ? 0.0 : 1.0;                      // 最後に一気に噛み潰す
+        hindFlex = THREE.MathUtils.lerp(0.5, -0.4, plunge);
+        label.innerText = "コマ 4: 地面付着突進 (GROUND-ADHESION RUSH)";
+    } else {
+        // コマ5: 復帰
+        const t = (phase - 0.75) / 0.25;
+        bodyY = THREE.MathUtils.lerp(0.32, 0.9, t);
+        bodyPitch = THREE.MathUtils.lerp(1.1, 0, t);
+        headPitch = THREE.MathUtils.lerp(1.25, 0, t);
+        mandOpen = 0.1;
+        hindFlex = THREE.MathUtils.lerp(-0.4, 0, t);
+        label.innerText = "コマ 5: 捕食完了・復帰 (Recovery)";
+    }
+
+    // 運動学の反映
+    grasshopperGroup.position.y = bodyY;
+    thoraxMesh.rotation.x = Math.PI / 2 + bodyPitch;
+    headGroup.rotation.x = headPitch;
+
+    leftMandible.rotation.z = -mandOpen;
+    rightMandible.rotation.z = mandOpen;
+
+    // 後脚の関節連動
+    hindLegL.rotation.x = -0.5 - hindFlex;
+    hindLegL.tibiaGroup.rotation.x = 1.2 + hindFlex * 1.5;
+    hindLegR.rotation.x = -0.5 - hindFlex;
+    hindLegR.tibiaGroup.rotation.x = 1.2 + hindFlex * 1.5;
+
+    document.getElementById('phaseSlider').value = phase;
+}
+
+function animate() {
+    requestAnimationFrame(animate);
+    if (isPlaying) {
+        animPhase += 0.005;
+        if (animPhase > 1) animPhase = 0;
+        updatePose(animPhase);
+    }
+    controls.update();
+    renderer.render(scene, camera);
+}
+
+function onWindowResize() {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+}
+
+window.onload = init;
+</script>
+</body>
+</html>

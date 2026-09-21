@@ -1,6 +1,7 @@
 .codex/
 glad_venv/
 ants
+grasshopper_mesh_test
 *.o
 *.obj
 *.log

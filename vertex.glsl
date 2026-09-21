@@ -18,6 +18,7 @@ uniform float uTime;
 uniform float uMotionSpeed;
 
 out vec3 Normal;
+out float vPartID;
 
 const float PI = 3.14159265359;
 
@@ -48,10 +49,12 @@ void main() {
         float sideSign = (aLegID < 0.5) ? 1.0 : -1.0;
         float t = uTime * 1.6 * uMotionSpeed;
         float forward  = 0.15 * uMotionSpeed;
-        float sweepY   = sin(t + sideSign * 1.2) * 0.45 * sideSign;
-        float nodX     = sin(t * 1.7 + sideSign) * 0.25;
+        // 左右対称のため yaw 全体を sideSign で反転、nod は同位相にする
+        float sway   = sin(t + 1.2) * 0.45 + forward;
+        float sweepY = sideSign * sway;
+        float nodX   = sin(t * 1.7 + 1.0) * 0.25;
         vec3 localPos = pos - aPivotRoot;
-        float cs = cos(sweepY + forward), ss = sin(sweepY + forward);
+        float cs = cos(sweepY), ss = sin(sweepY);
         vec3 p1;
         p1.x = localPos.x * cs - localPos.z * ss;
         p1.y = localPos.y;
@@ -62,7 +65,7 @@ void main() {
         p2.y = p1.y * cx - p1.z * sx;
         p2.z = p1.y * sx + p1.z * cx;
         pos = aPivotRoot + p2;
-        norm = rotateY(sweepY + forward) * norm;
+        norm = rotateY(sweepY) * norm;
         norm = rotateX(nodX) * norm;
     }
     else if (aPartID > 2.5) {
@@ -99,5 +102,6 @@ void main() {
     pos += aInstancePos;
 
     Normal = norm;
+    vPartID = aPartID;
     gl_Position = uViewProj * vec4(pos, 1.0);
 }
