@@ -67,6 +67,12 @@ TEST(NestGrid, BoundaryMaterialsAndStrengthRemainFixed) {
 TEST(NestGrid, MaterialStrengthContract) {
   NestGrid g;
   const CellCoord c{1024, 1};
+  ASSERT_EQ(g.soilStrengthAt(c), 100);
+  for (const std::uint16_t strength : {100, 80, 60, 40, 20, 0}) {
+    g.setSoilStrength(c, strength);
+    EXPECT_EQ(g.soilStrengthAt(c), strength);
+    EXPECT_EQ(g.materialAt(c), CellMaterial::Soil);
+  }
   g.setSoilStrength(c, 65535);
   EXPECT_EQ(g.soilStrengthAt(c), 100);
   g.setSoilStrength(c, 42);
@@ -81,6 +87,26 @@ TEST(NestGrid, MaterialStrengthContract) {
     g.setSoilStrength(c, 100);
     EXPECT_EQ(g.soilStrengthAt(c), 0);
   }
+}
+
+TEST(CellCoord, RowMajorOrder) {
+  EXPECT_LT((CellCoord{0, 0}), (CellCoord{1, 0}));
+  EXPECT_LT((CellCoord{2047, 0}), (CellCoord{0, 1}));
+  EXPECT_FALSE((CellCoord{0, 1} < CellCoord{2047, 0}));
+  EXPECT_FALSE((CellCoord{1, 0} < CellCoord{0, 0}));
+  EXPECT_FALSE((CellCoord{1, 1} < CellCoord{1, 1}));
+  EXPECT_EQ((CellCoord{1, 1}), (CellCoord{1, 1}));
+  EXPECT_NE((CellCoord{1, 1}), (CellCoord{1, 2}));
+}
+
+template <typename Validator>
+concept HasCompletedNestValidation = requires(const NestGrid& g) {
+  Validator::validateCompletedNest(g);
+};
+
+TEST(NestValidator, NoCompletedNestValidationInPart2A) {
+  static_assert(!HasCompletedNestValidation<NestValidator>);
+  EXPECT_FALSE(HasCompletedNestValidation<NestValidator>);
 }
 
 TEST(NestValidator, RejectsDisconnectedAir) {

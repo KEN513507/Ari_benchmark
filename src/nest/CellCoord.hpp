@@ -8,9 +8,9 @@ struct CellCoord {
 
   constexpr bool operator==(const CellCoord&) const = default;
   constexpr bool operator!=(const CellCoord&) const = default;
-  // Lexicographic ordering by x, then y.
+  // Row-major ordering by y, then x.
   constexpr bool operator<(const CellCoord& other) const {
-    return x < other.x || (x == other.x && y < other.y);
+    return y < other.y || (y == other.y && x < other.x);
   }
 };
 
