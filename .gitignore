@@ -1,0 +1,10 @@
+.codex/
+glad_venv/
+ants
+*.o
+*.obj
+*.log
+core
+core.*
+.cache/
+build/
